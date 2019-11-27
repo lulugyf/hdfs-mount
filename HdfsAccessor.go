@@ -40,6 +40,8 @@ type hdfsAccessorImpl struct {
 	MetadataClient      *hdfs.Client             // HDFS client used for metadata operations
 	MetadataClientMutex sync.Mutex               // Serializing all metadata operations for simplicity (for now), TODO: allow N concurrent operations
 	UserNameToUidCache  map[string]UidCacheEntry // cache for converting usernames to UIDs
+
+	BaseDir string // mount on subdirectory, "" -> /
 }
 
 type UidCacheEntry struct {
@@ -50,13 +52,15 @@ type UidCacheEntry struct {
 var _ HdfsAccessor = (*hdfsAccessorImpl)(nil) // ensure hdfsAccessorImpl implements HdfsAccessor
 
 // Creates an instance of HdfsAccessor
-func NewHdfsAccessor(nameNodeAddresses string, clock Clock) (HdfsAccessor, error) {
+func NewHdfsAccessor(nameNodeAddresses string, clock Clock, basedir string) (HdfsAccessor, error) {
 	nns := strings.Split(nameNodeAddresses, ",")
 
 	this := &hdfsAccessorImpl{
 		NameNodeAddresses:  nns,
 		Clock:              clock,
-		UserNameToUidCache: make(map[string]UidCacheEntry)}
+		UserNameToUidCache: make(map[string]UidCacheEntry),
+		BaseDir:            basedir,
+	}
 	return this, nil
 }
 
@@ -96,7 +100,7 @@ func (this *hdfsAccessorImpl) connectToNameNodeImpl() (*hdfs.Client, error) {
 	// Colinmar's hdfs implementation has supported the multiple name node connection
 	client, err := hdfs.NewClient(hdfs.ClientOptions{
 		Addresses: this.NameNodeAddresses,
-		})
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +121,10 @@ func (this *hdfsAccessorImpl) connectToNameNodeImpl() (*hdfs.Client, error) {
 }
 
 // Opens HDFS file for reading
-func (this *hdfsAccessorImpl) OpenRead(path string) (ReadSeekCloser, error) {
+func (this *hdfsAccessorImpl) OpenRead(rpath string) (ReadSeekCloser, error) {
+	path := _chgPath(rpath, this.BaseDir)
+	Info.Printf("--OpenRead path chg  %s -> %s\n", rpath, path)
+
 	// Blocking read. This is to reduce the connections pressue on hadoop-name-node
 	this.MetadataClientMutex.Lock()
 	defer this.MetadataClientMutex.Unlock()
@@ -134,7 +141,9 @@ func (this *hdfsAccessorImpl) OpenRead(path string) (ReadSeekCloser, error) {
 }
 
 // Creates new HDFS file
-func (this *hdfsAccessorImpl) CreateFile(path string, mode os.FileMode) (HdfsWriter, error) {
+func (this *hdfsAccessorImpl) CreateFile(rpath string, mode os.FileMode) (HdfsWriter, error) {
+	path := _chgPath(rpath, this.BaseDir)
+	Info.Printf("--CreateFile path chg  %s -> %s\n", rpath, path)
 	this.MetadataClientMutex.Lock()
 	defer this.MetadataClientMutex.Unlock()
 	if this.MetadataClient == nil {
@@ -150,8 +159,21 @@ func (this *hdfsAccessorImpl) CreateFile(path string, mode os.FileMode) (HdfsWri
 	return NewHdfsWriter(writer), nil
 }
 
+func _chgPath(rpath, basedir string) string {
+	if basedir == "" {
+		return rpath
+	}
+	if rpath == "/" {
+		return basedir
+	}
+	return basedir + rpath
+}
+
 // Enumerates HDFS directory
-func (this *hdfsAccessorImpl) ReadDir(path string) ([]Attrs, error) {
+func (this *hdfsAccessorImpl) ReadDir(rpath string) ([]Attrs, error) {
+	path := _chgPath(rpath, this.BaseDir)
+	Info.Printf("--ReadDir path chg  %s -> %s\n", rpath, path)
+
 	this.MetadataClientMutex.Lock()
 	defer this.MetadataClientMutex.Unlock()
 	if this.MetadataClient == nil {
@@ -178,7 +200,9 @@ func (this *hdfsAccessorImpl) ReadDir(path string) ([]Attrs, error) {
 }
 
 // Retrieves file/directory attributes
-func (this *hdfsAccessorImpl) Stat(path string) (Attrs, error) {
+func (this *hdfsAccessorImpl) Stat(rpath string) (Attrs, error) {
+	path := _chgPath(rpath, this.BaseDir)
+	Info.Printf("--Stat path chg  %s -> %s\n", rpath, path)
 	this.MetadataClientMutex.Lock()
 	defer this.MetadataClientMutex.Unlock()
 
@@ -245,7 +269,7 @@ func (this *hdfsAccessorImpl) AttrsFromFileInfo(fileInfo os.FileInfo) Attrs {
 }
 
 func (this *hdfsAccessorImpl) AttrsFromFsInfo(fsInfo hdfs.FsInfo) FsInfo {
-	return FsInfo {
+	return FsInfo{
 		capacity:  fsInfo.Capacity,
 		used:      fsInfo.Used,
 		remaining: fsInfo.Remaining}
@@ -293,7 +317,10 @@ func IsSuccessOrBenignError(err error) bool {
 }
 
 // Creates a directory
-func (this *hdfsAccessorImpl) Mkdir(path string, mode os.FileMode) error {
+func (this *hdfsAccessorImpl) Mkdir(rpath string, mode os.FileMode) error {
+	path := _chgPath(rpath, this.BaseDir)
+	Info.Printf("--Mkdir path chg  %s -> %s\n", rpath, path)
+
 	this.MetadataClientMutex.Lock()
 	defer this.MetadataClientMutex.Unlock()
 	if this.MetadataClient == nil {
@@ -311,7 +338,10 @@ func (this *hdfsAccessorImpl) Mkdir(path string, mode os.FileMode) error {
 }
 
 // Removes file or directory
-func (this *hdfsAccessorImpl) Remove(path string) error {
+func (this *hdfsAccessorImpl) Remove(rpath string) error {
+	path := _chgPath(rpath, this.BaseDir)
+	Info.Printf("--Remove path chg  %s -> %s\n", rpath, path)
+
 	this.MetadataClientMutex.Lock()
 	defer this.MetadataClientMutex.Unlock()
 	if this.MetadataClient == nil {
@@ -323,7 +353,10 @@ func (this *hdfsAccessorImpl) Remove(path string) error {
 }
 
 // Renames file or directory
-func (this *hdfsAccessorImpl) Rename(oldPath string, newPath string) error {
+func (this *hdfsAccessorImpl) Rename(roldPath string, rnewPath string) error {
+	oldPath := _chgPath(roldPath, this.BaseDir)
+	newPath := _chgPath(rnewPath, this.BaseDir)
+	Info.Printf("--Rename path chg  %s -> %s\n", roldPath, oldPath)
 	this.MetadataClientMutex.Lock()
 	defer this.MetadataClientMutex.Unlock()
 	if this.MetadataClient == nil {
@@ -335,7 +368,10 @@ func (this *hdfsAccessorImpl) Rename(oldPath string, newPath string) error {
 }
 
 // Changes the mode of the file
-func (this *hdfsAccessorImpl) Chmod(path string, mode os.FileMode) error {
+func (this *hdfsAccessorImpl) Chmod(rpath string, mode os.FileMode) error {
+	path := _chgPath(rpath, this.BaseDir)
+	Info.Printf("--Chmod path chg  %s -> %s\n", rpath, path)
+
 	this.MetadataClientMutex.Lock()
 	defer this.MetadataClientMutex.Unlock()
 	if this.MetadataClient == nil {
@@ -347,7 +383,10 @@ func (this *hdfsAccessorImpl) Chmod(path string, mode os.FileMode) error {
 }
 
 // Changes the owner and group of the file
-func (this *hdfsAccessorImpl) Chown(path string, user, group string) error {
+func (this *hdfsAccessorImpl) Chown(rpath string, user, group string) error {
+	path := _chgPath(rpath, this.BaseDir)
+	Info.Printf("--Remove path chg  %s -> %s\n", rpath, path)
+
 	this.MetadataClientMutex.Lock()
 	defer this.MetadataClientMutex.Unlock()
 	if this.MetadataClient == nil {
@@ -358,12 +397,12 @@ func (this *hdfsAccessorImpl) Chown(path string, user, group string) error {
 	return this.MetadataClient.Chown(path, user, group)
 }
 
-// Close current connection if needed 
+// Close current connection if needed
 func (this *hdfsAccessorImpl) Close() error {
 	this.MetadataClientMutex.Lock()
 	defer this.MetadataClientMutex.Unlock()
 
-	if(this.MetadataClient != nil) {
+	if this.MetadataClient != nil {
 		err := this.MetadataClient.Close()
 		this.MetadataClient = nil
 		return err

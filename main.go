@@ -37,6 +37,7 @@ func main() {
 	expandZips := flag.Bool("expandZips", false, "Enables automatic expansion of ZIP archives")
 	readOnly := flag.Bool("readOnly", false, "Enables mount with readonly")
 	logLevel := flag.Int("logLevel", 0, "logs to be printed. 0: only fatal/err logs; 1: +warning logs; 2: +info logs")
+	basedir := flag.String("baseDir", "", "base directory mount on hdfs")
 
 	flag.Usage = Usage
 	flag.Parse()
@@ -46,7 +47,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	log.Print("hdfs-mount: current head GITCommit: ", GITCOMMIT, ", Built time: ", BUILDTIME, ", Built by:", HOSTNAME)
+	log.Print("hdfs-mount: current head GITCommit: ", GITCOMMIT, ", Built time: ", BUILDTIME, ",, Built by:", HOSTNAME)
 
 	allowedPrefixes := strings.Split(*allowedPrefixesString, ",")
 
@@ -60,7 +61,7 @@ func main() {
 		InitLogger(os.Stdout, os.Stdout, os.Stdout, os.Stderr)
 	}
 
-	hdfsAccessor, err := NewHdfsAccessor(flag.Arg(0), WallClock{})
+	hdfsAccessor, err := NewHdfsAccessor(flag.Arg(0), WallClock{}, *basedir)
 	if err != nil {
 		log.Fatal("Error/NewHdfsAccessor: ", err)
 	}
